@@ -1,0 +1,22 @@
+[package]
+name = "gpsnative"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "gpsnative"
+crate-type = ["staticlib"]
+
+[dependencies]
+idevice = { path = "vendor/idevice", default-features = false, features = ["ring", "remote_pairing", "tunnel_tcp_stack", "rsd", "dvt", "location_simulation", "tcp", "cryptexd", "core_device_proxy", "heartbeat", "misagent"] }
+plist = "1.8"
+tokio = { version = "1", features = ["rt-multi-thread", "time", "net", "sync", "io-util"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+ed25519-dalek = "2"
+libc = "0.2"
+socket2 = "0.6"
+
+[patch.crates-io]
+jktcp = { path = "vendor/jktcp" }

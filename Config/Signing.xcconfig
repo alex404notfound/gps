@@ -1,0 +1,5 @@
+// Set your Personal Team in Xcode, or create the ignored local file below.
+// The original app.gps.development identifier is intentionally preserved on-device.
+CODE_SIGN_STYLE = Automatic
+PRODUCT_BUNDLE_IDENTIFIER = app.gps.reconstruction
+#include? "Signing.local.xcconfig"

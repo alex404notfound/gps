@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Keep GitHub's language summary focused on the app's own source.
+Vendor/** linguist-vendored
+Native/vendor/** linguist-vendored

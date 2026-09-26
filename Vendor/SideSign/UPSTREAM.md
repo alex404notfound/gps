@@ -1,0 +1,5 @@
+# SideSign source snapshot
+
+This directory contains a source snapshot of [SideStore/SideSign](https://github.com/SideStore/SideSign) at commit `6b68651697f99791ef85404b7aea1891a26a285d`. It is third-party code, not recovered GPS source. Upstream states that SideSign is licensed under GPL-3.0; the license text is in `LICENSE`.
+
+The local package omits the upstream CLI and tests and pins dependency revisions from that commit's `Package.resolved`. AnisetteKit is a local source snapshot under `Vendor/AnisetteKit`, including its AGPLv3 license. Local changes keep logging disabled by default without evaluating log arguments, require a matching SHA-256 before extracting an Anisette package, and require HTTPS for package metadata/downloads and redirects. GPS Rebuilt uses local on-device Anisette and does not call SideSign's remote Anisette providers, certificate creation/revocation, or device/App ID mutation APIs.

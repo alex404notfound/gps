@@ -1,0 +1,32 @@
+name: Source checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check publication files
+        run: python3 scripts/check_publication.py
+      - name: Check generated Xcode project
+        run: |
+          python3 scripts/generate_xcode_project.py
+          git diff --exit-code -- GPS.xcodeproj
+      - name: Test Swift core
+        run: swift test
+      - name: Select validated Rust toolchain
+        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt
+      - name: Check native formatting
+        run: cargo +1.98.1 fmt --manifest-path Native/Cargo.toml --check
+      - name: Test native library
+        run: cargo +1.98.1 test --locked --manifest-path Native/Cargo.toml --lib
