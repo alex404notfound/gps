@@ -134,7 +134,7 @@ struct AppAccessView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                TextField("Private IPv4 address", text: $deviceIP)
+                TextField("Connection address", text: $deviceIP)
                     .keyboardType(.numbersAndPunctuation)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -210,13 +210,27 @@ struct AppAccessView: View {
 
             DisclosureGroup("Check a direct cellular connection") {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("While GPS is disconnected, leave Wi-Fi off and Cellular Data and LocalDevVPN on. This check takes up to 15 seconds and does not change location.")
+                    Text("Unplug USB and disconnect GPS. Leave Wi-Fi off and Cellular Data and LocalDevVPN on. This checks the VPN and direct on-device addresses; allow up to 30 seconds. It does not change location.")
                         .font(.caption).foregroundStyle(.secondary)
                     Button(model.isCheckingCellularConnection ? "Checking…" : "Check cellular connection") {
                         Task { await model.checkCellularConnection() }
                     }
                     .disabled(model.isCheckingCellularConnection || isConnecting || model.connectionState.isConnected || model.operationState.isBusy)
                     if let result = model.cellularConnectionCheck {
+                        ForEach(model.directConnectionCandidates, id: \.self) { host in
+                            Button("Try direct connection (\(host))") {
+                                Task { await model.connect(directHost: host) }
+                            }
+                            .disabled(model.isCheckingCellularConnection || isConnecting || model.connectionState.isConnected || model.operationState.isBusy)
+                        }
+                        if let directResult = model.directConnectionResult {
+                            Text(directResult)
+                                .font(.callout)
+                                .textSelection(.enabled)
+                            ShareLink(item: directResult) {
+                                Label("Share direct connection result", systemImage: "square.and.arrow.up")
+                            }
+                        }
                         Text(result).font(.caption).textSelection(.enabled)
                         ShareLink(item: result) {
                             Label("Share check result", systemImage: "square.and.arrow.up")

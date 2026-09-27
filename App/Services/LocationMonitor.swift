@@ -27,7 +27,8 @@ final class LocationMonitor: NSObject, @preconcurrency CLLocationManagerDelegate
     var onEvent: ((Event) -> Void)?
 
     private let manager = CLLocationManager()
-    private var requested = false
+    private var policy = LocationMonitoringPolicy()
+    private var requested: Bool { policy.mode != .idle }
     private var updating = false
     private var sceneActive = true
     private var permissionPromptRequested = false
@@ -40,20 +41,26 @@ final class LocationMonitor: NSObject, @preconcurrency CLLocationManagerDelegate
     override init() {
         super.init()
         manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-        manager.distanceFilter = kCLDistanceFilterNone
+        // Keep the session eligible for background delivery. Automatic pauses
+        // end When In Use access; reduce sampling cost instead of pausing it.
         manager.pausesLocationUpdatesAutomatically = false
         manager.showsBackgroundLocationIndicator = true
+        NotificationCenter.default.addObserver(self, selector: #selector(powerStateChanged),
+                                               name: .NSProcessInfoPowerStateDidChange, object: nil)
     }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
 
     func beginAppliedSession() {
         cancelResetVerification()
-        requested = true
+        policy.mode = .applied
+        updateSamplingPolicy()
         activateIfPermitted()
     }
 
     func beginResetVerification() {
-        if !requested { requested = true }
+        policy.mode = .resetVerification
+        updateSamplingPolicy()
         activateIfPermitted()
         guard updating else {
             onEvent?(.resetVerificationUnavailable)
@@ -76,11 +83,15 @@ final class LocationMonitor: NSObject, @preconcurrency CLLocationManagerDelegate
 
     func sceneBecameActive() {
         sceneActive = true
+        policy.isBackground = false
+        updateSamplingPolicy()
         if requested && !updating { activateIfPermitted() }
     }
 
     func sceneEnteredBackground() {
         sceneActive = false
+        policy.isBackground = true
+        updateSamplingPolicy()
     }
 
     func sceneBecameInactive() {
@@ -89,7 +100,7 @@ final class LocationMonitor: NSObject, @preconcurrency CLLocationManagerDelegate
 
     func stop() {
         let wasRequested = requested || updating
-        requested = false
+        policy.mode = .idle
         cancelResetVerification()
         lastSource = nil
         if updating {
@@ -185,6 +196,24 @@ final class LocationMonitor: NSObject, @preconcurrency CLLocationManagerDelegate
         @unknown default:
             onEvent?(.servicesUnavailable)
         }
+    }
+
+    @objc nonisolated private func powerStateChanged() {
+        Task { @MainActor [weak self] in self?.updateSamplingPolicy() }
+    }
+
+    private func updateSamplingPolicy() {
+        policy.isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+        guard let sampling = policy.sampling else { return }
+        let accuracy: CLLocationAccuracy
+        switch sampling.accuracy {
+        case .hundredMeters: accuracy = kCLLocationAccuracyHundredMeters
+        case .kilometer: accuracy = kCLLocationAccuracyKilometer
+        case .threeKilometers: accuracy = kCLLocationAccuracyThreeKilometers
+        }
+        let distance = sampling.minimumMovement ?? kCLDistanceFilterNone
+        if manager.desiredAccuracy != accuracy { manager.desiredAccuracy = accuracy }
+        if manager.distanceFilter != distance { manager.distanceFilter = distance }
     }
 
     private func cancelResetVerification() {

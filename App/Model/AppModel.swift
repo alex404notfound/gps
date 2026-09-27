@@ -32,6 +32,8 @@ final class AppModel {
     var resetReadbackStatus: String?
     var isCheckingCellularConnection = false
     var cellularConnectionCheck: String?
+    var directConnectionCandidates: [String] = []
+    var directConnectionResult: String?
 
     @ObservationIgnored private let session: LocationSession
     @ObservationIgnored private let monitor = LocationMonitor()
@@ -43,6 +45,15 @@ final class AppModel {
     @ObservationIgnored private var actionInProgress = false
     @ObservationIgnored private var events: [String] = []
     @ObservationIgnored private var writingDiagnostics = false
+    @ObservationIgnored private lazy var diagnosticsWriter = CoalescingFileWriter(url: diagnosticsURL) { [weak self] in
+        Task { @MainActor [weak self] in
+            guard let self, self.statusMessage == nil else { return }
+            // Reporting a failed write must not schedule another failed write.
+            self.writingDiagnostics = true
+            self.statusMessage = "Diagnostics could not be saved for USB export."
+            self.writingDiagnostics = false
+        }
+    }
     @ObservationIgnored private var pendingImportAttempted = false
     @ObservationIgnored private let pathMonitor = NWPathMonitor()
     @ObservationIgnored private var networkPathSummary = "System network path has not been reported yet."
@@ -237,22 +248,35 @@ final class AppModel {
         }
     }
 
-    func connect() async {
+    func connect(directHost: String? = nil) async {
         guard !actionInProgress else { statusMessage = GPSError.busy.localizedDescription; return }
         if configuration == nil { restoreSetup() }
-        guard let configuration else { statusMessage = GPSError.setupRequired.localizedDescription; return }
+        guard var configuration else { statusMessage = GPSError.setupRequired.localizedDescription; return }
+        if let directHost {
+            guard directHost == "127.0.0.1" || directHost == "::1" else {
+                statusMessage = "Choose one of the direct on-device test addresses."
+                return
+            }
+            configuration.transport.host = directHost
+        }
         actionInProgress = true
         defer { actionInProgress = false }
         connectionState = .connecting
         statusMessage = nil
-        record("Connect requested. \(networkPathSummary)")
+        if let directHost { directConnectionResult = "Connecting directly to \(directHost)…" }
+        record("\(directHost == nil ? "Connect" : "Direct pairing test") requested. \(networkPathSummary)")
         var failure: Error?
         do {
             try await session.connect(configuration: configuration)
+            if let directHost { directConnectionResult = "\(directHost): Connected to the developer location service." }
             record("Authenticated developer location service connected.")
         } catch {
             failure = error
             monitor.stop()
+            if let directHost {
+                directConnectionResult = "\(directHost): \(error.localizedDescription)"
+                record("Direct pairing test \(directHost) failed: \(error.localizedDescription.prefix(600))")
+            }
             record("Connection failed. No location command was sent.")
         }
         await updateSession(failure: failure)
@@ -269,10 +293,12 @@ final class AppModel {
         actionInProgress = true
         isCheckingCellularConnection = true
         cellularConnectionCheck = "Checking the local developer ports…"
+        directConnectionCandidates = []
         defer { actionInProgress = false; isCheckingCellularConnection = false }
         do {
             let result = try await LocalConnectionProbe.shared.check(configuration: configuration)
             cellularConnectionCheck = result.summary
+            directConnectionCandidates = result.directConnectionCandidates
             record("Local connection check: \(result.summary)")
         } catch {
             cellularConnectionCheck = error.localizedDescription
@@ -359,7 +385,7 @@ final class AppModel {
 
     func refreshAfterForeground() {
         monitor.sceneBecameActive()
-        profileExpiration = ProvisioningStatus.embeddedExpiration()
+        // The signed bundle's embedded profile is immutable for this process.
         if configuration == nil { restoreSetup() }
         Task {
             await renewal.reload()
@@ -374,6 +400,11 @@ final class AppModel {
     func recordSceneBackground() {
         monitor.sceneEnteredBackground()
         record("Scene entered background.")
+        Task {
+            await withBackgroundTime(name: "Save diagnostics") {
+                await self.diagnosticsWriter.flush()
+            }
+        }
     }
 
     func recordSceneInactive() {
@@ -547,7 +578,7 @@ final class AppModel {
     private func record(_ message: String) {
         // Only fixed messages; no coordinates, search queries, device IDs, or imported keys.
         events.append("\(Date.now.formatted(date: .omitted, time: .standard))  \(message)")
-        events = Array(events.suffix(80))
+        if events.count > 80 { events.removeFirst(events.count - 80) }
         persistDiagnostics()
     }
 
@@ -582,18 +613,7 @@ final class AppModel {
 
     private func persistDiagnostics() {
         guard !writingDiagnostics else { return }
-        writingDiagnostics = true
-        defer { writingDiagnostics = false }
-        do {
-            try FileManager.default.createDirectory(at: setupDirectory, withIntermediateDirectories: true)
-            try Data(diagnosticText.utf8).write(
-                to: diagnosticsURL,
-                options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
-            )
-        } catch {
-            // Do not append arbitrary filesystem errors to the exported diagnostics.
-            if statusMessage == nil { statusMessage = "Diagnostics could not be saved for USB export." }
-        }
+        diagnosticsWriter.schedule(Data(diagnosticText.utf8))
     }
 
     private func withBackgroundTime(name: String, operation: () async -> Void) async {

@@ -15,3 +15,17 @@ have left the adapter's local queue. This confirms local transport drain; it
 does not assert that an iOS service executed the command or that physical GPS
 has changed. Regression tests cover buffered records, flush errors, and
 window-blocked writes.
+
+The packet reader's 500 ms retry timer now runs only while protocol work is
+pending. The handle already guards its 250 ms flush timer; the unconditional
+reader timer had still been waking idle tunnels. Paused-clock tests verify
+that an idle handle does not re-poll its transport over a virtual minute,
+while unacknowledged data is retransmitted and quiet SYN handshakes time out.
+Run the local, device-free tests with:
+
+```sh
+cargo test --locked --manifest-path Native/vendor/jktcp/Cargo.toml --lib -- --skip tests::local_tcp --skip tests::handle_speed
+```
+
+The two skipped upstream tests require a privileged TUN interface and manual
+interaction. The remaining tests use synthetic in-memory transports.

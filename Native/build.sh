@@ -55,5 +55,9 @@ SDKROOT=$(xcrun --sdk "$sdk" --show-sdk-path)
 export IPHONEOS_DEPLOYMENT_TARGET=17.4
 "$cargo_bin" build --locked --release --target "$target" --manifest-path "$native_dir/Cargo.toml"
 mkdir -p "$output_dir"
-cp "$target_dir/$target/release/libgpsnative.a" "$output_dir/libgpsnative.a"
+# Preserve the archive's timestamp on a no-op build so Xcode can skip relinking.
+archive="$target_dir/$target/release/libgpsnative.a"
+if ! cmp -s "$archive" "$output_dir/libgpsnative.a"; then
+    cp "$archive" "$output_dir/libgpsnative.a"
+fi
 echo "$output_dir/libgpsnative.a"

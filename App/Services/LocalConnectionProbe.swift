@@ -14,14 +14,16 @@ struct LocalConnectionProbeResult: Decodable, Sendable {
         }
     }
     enum PeerInterface: String, Decodable, Sendable { case unique, none, ambiguous, unavailable }
+    enum BindingBasis: String, Decodable, Sendable { case exactPeer, tcpSource, none, unavailable }
     enum Outcome: String, Decodable, Sendable {
-        case connected, refused, timedOut, unreachable, otherError, unavailable
+        case connected, refused, timedOut, unreachable, permissionDenied, otherError, unavailable
         var title: String {
             switch self {
             case .connected: "TCP accepted"
             case .refused: "TCP refused"
             case .timedOut: "timed out"
             case .unreachable: "unreachable"
+            case .permissionDenied: "access denied by iOS"
             case .otherError: "socket error"
             case .unavailable: "not available"
             }
@@ -33,11 +35,24 @@ struct LocalConnectionProbeResult: Decodable, Sendable {
         let ordinarySource: Source?
         let vpnBoundSource: Source?
     }
+    struct Loopback: Decodable, Sendable {
+        let lockdown: Outcome
+        let pairing: Outcome
+    }
     let version: Int
     let routeSource: Source
     let peerInterface: PeerInterface
     let lockdown: Endpoint
     let pairing: Endpoint
+    let bindingBasis: BindingBasis?
+    let loopbackIPv4: Loopback?
+    let loopbackIPv6: Loopback?
+
+    var directConnectionCandidates: [String] {
+        [("127.0.0.1", loopbackIPv4), ("::1", loopbackIPv6)].compactMap { host, result in
+            result?.pairing == .connected ? host : nil
+        }
+    }
 
     var summary: String {
         var lines = ["Route preview: \(routeSource.title).",
@@ -51,14 +66,25 @@ struct LocalConnectionProbeResult: Decodable, Sendable {
         }
         switch peerInterface {
         case .unique:
-            lines.append("Matching VPN interface found.")
+            lines.append(bindingBasis == .tcpSource
+                ? "VPN interface selected from the TCP socket source."
+                : "Exact VPN peer interface found.")
             lines.append("VPN-bound Lockdown: \(lockdown.vpnBound.title).")
             lines.append("VPN-bound remote pairing: \(pairing.vpnBound.title).")
-        case .none: lines.append("No exact peer interface was advertised; no forced route was tried.")
-        case .ambiguous: lines.append("The peer interface was ambiguous; no forced route was tried.")
-        case .unavailable: lines.append("The peer interface could not be checked; no forced route was tried.")
+        case .none: lines.append("No matching VPN interface was found; no forced route was tried.")
+        case .ambiguous: lines.append("The VPN interface evidence was ambiguous; no forced route was tried.")
+        case .unavailable: lines.append("The VPN interface could not be checked; no forced route was tried.")
         }
-        lines.append("The preview uses a separate route lookup. TCP availability only; no pairing or location command was sent.")
+        for (host, result) in [("127.0.0.1", loopbackIPv4), ("::1", loopbackIPv6)] {
+            if let result {
+                lines.append("\(host) Lockdown: \(result.lockdown.title).")
+                lines.append("\(host) remote pairing: \(result.pairing.title).")
+            }
+        }
+        if !directConnectionCandidates.isEmpty {
+            lines.append("A direct pairing port accepted TCP. Use a direct connection button below to test authentication and service access. Your saved Device IP stays unchanged.")
+        }
+        lines.append("The preview uses a separate route lookup. TCP acceptance does not confirm authentication or later service access. No pairing or location command was sent.")
         return lines.joined(separator: "\n")
     }
 }

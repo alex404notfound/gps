@@ -29,6 +29,11 @@ Native/build.sh device
 Native/build.sh simulator
 ```
 
+Unchanged archives retain their timestamps, allowing incremental Xcode builds
+to skip linking. Cargo still checks source, dependency, and toolchain changes
+on every build. Run `python3 scripts/generate_xcode_project.py` after adding
+Swift sources; `--check` verifies the generated project without writing it.
+
 These produce `Native/build/iphoneos/libgpsnative.a` and
 `Native/build/iphonesimulator/libgpsnative.a` respectively. Link the matching
 archive in the Xcode target and expose `GPSNative.h` through the target's
@@ -63,12 +68,32 @@ embedded profile expires remains untested.
 
 `gps_native_probe_local_route` is an opt-in, connect-only check for the
 configured LocalDevVPN device IP. It tests Lockdown port 62078 and the setup's
-RemotePairing port with three-second bounds, reports only fixed outcome and
-source-interface classes, and never sends authentication or location data.
-Its UDP route preview is separate from the TCP socket source; a VPN-bound
-comparison is attempted only when one point-to-point tunnel interface
-advertises that exact device IP as its peer. The normal connection path does
-not use this diagnostic to choose an interface.
+RemotePairing port with three-second bounds per TCP socket. It also checks
+those two fixed ports on `127.0.0.1` and `::1`. Results contain only fixed
+outcome and source-interface classes; no authentication or location data is
+sent. A connected loopback port does not establish whether authentication or
+the later service/listener ports will work. Its UDP route preview is separate
+from the TCP socket sources. The optional VPN-bound comparison uses a unique
+point-to-point `utun` interface that advertises the exact device peer, or,
+when no exact peer is advertised, a unique `utun` matching the actual ordinary
+TCP source address. If both TCP sockets expose sources, they must agree.
+`bindingBasis` reports `exactPeer`, `tcpSource`, `none`, or `unavailable`. The
+normal connection path does not use this diagnostic to choose an interface.
+Each pair of ports runs concurrently: the ordinary checks finish before the
+optional bound comparison, for a combined socket timeout budget of six seconds.
+The loopback checks overlap both phases.
+
+The app's direct connection buttons temporarily select `127.0.0.1` or `::1`
+and use strict RemotePairing directly, since the tested phone denies direct
+Lockdown access. They retain peer-key, TLS-PSK, and RSD device-identity checks.
+They do not change the saved VPN address used by normal Connect and renewal.
+On the tested iPhone running iOS 27.2, both loopback pairing ports accepted
+TCP with Wi-Fi off and cellular data on. The full `127.0.0.1` attempt then
+failed during the initial RemotePairing greeting with `ConnectionReset`
+(OS error 54), before saved credentials, peer-signature verification, or
+tunnel creation. TCP acceptance alone is not a working connection. A full
+`::1` session has not been verified. The configured VPN endpoint refused
+both developer ports, including the explicitly VPN-bound comparison.
 
 Run the native unit tests with `cargo test --manifest-path Native/Cargo.toml
 --lib`. The vendored protocol tests use `cargo test --manifest-path
@@ -173,10 +198,13 @@ The five Apple developer-image files must be copied into the app's private
 Application Support directory before the phone is expected to prepare itself
 after a reboot. Device operation still requires Developer Mode, an active
 LocalDevVPN route, a valid setup document, and network access to Apple TSS if
-the image is absent. The user confirmed connection after restarting the iPhone
-with USB unplugged and Xcode closed, with Wi-Fi and LocalDevVPN on. A Wi-Fi-off,
-cellular-only RPPairing attempt was refused before pairing, and a live
-RPPairing tunnel broke during Wi-Fi-to-cellular handoff. The classic Lockdown
-route requires a newly imported trusted USB pair record and phone validation;
-it is not yet proven on this device. See the root validation document for the
-tested behavior and remaining limits.
+the image is absent. Connection after a restart was confirmed with USB
+unplugged, Xcode closed, and Wi-Fi and LocalDevVPN on.
+
+The tested cellular startup uses the trusted Lockdown/CoreDeviceProxy route:
+leave LocalDevVPN on, briefly turn Cellular Data off, connect and set a chosen
+location, then turn data back on. Set and Reset were confirmed in that
+existing session with Wi-Fi off and USB unplugged. Repeat after losing the
+session. A fresh connection with cellular data continuously on remains
+unresolved; switching an existing Wi-Fi session to cellular also failed.
+The in-app App Access screen documents the working sequence.

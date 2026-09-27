@@ -23,7 +23,14 @@ struct GPSApp: App {
             }
             .tint(.blue)
             .environment(model)
-            .task { await model.importPendingSetupIfPresent() }
+            .task {
+                await model.importPendingSetupIfPresent()
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--restore-default-vpn-address") {
+                    await model.updateConnectionAddress("10.7.0.1")
+                }
+                #endif
+            }
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
                 case .active:

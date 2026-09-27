@@ -18,10 +18,10 @@ jobs:
           persist-credentials: false
       - name: Check publication files
         run: python3 scripts/check_publication.py
+      - name: Test source tooling
+        run: python3 -m unittest discover -s Tests/ScriptTests
       - name: Check generated Xcode project
-        run: |
-          python3 scripts/generate_xcode_project.py
-          git diff --exit-code -- GPS.xcodeproj
+        run: python3 scripts/generate_xcode_project.py --check
       - name: Test Swift core
         run: swift test
       - name: Select validated Rust toolchain
@@ -30,3 +30,5 @@ jobs:
         run: cargo +1.98.1 fmt --manifest-path Native/Cargo.toml --check
       - name: Test native library
         run: cargo +1.98.1 test --locked --manifest-path Native/Cargo.toml --lib
+      - name: Test tunnel transport
+        run: cargo +1.98.1 test --locked --manifest-path Native/vendor/jktcp/Cargo.toml --lib -- --skip tests::local_tcp --skip tests::handle_speed

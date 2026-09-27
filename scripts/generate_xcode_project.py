@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
 """Generate the small Xcode project deterministically, without external generators."""
+import argparse
 import hashlib
 import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 objects = {}
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--check", action="store_true", help="fail if generated files are stale; do not write")
+args = parser.parse_args()
+stale_paths = []
+
+def write_generated(path, content):
+    if path.exists() and path.read_text() == content:
+        return
+    if args.check:
+        stale_paths.append(path.relative_to(ROOT))
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
 
 def identifier(key):
     return hashlib.sha256(key.encode()).hexdigest()[:24].upper()
@@ -50,7 +64,10 @@ signing_product = add("product:sidesign", f'isa = XCSwiftPackageProductDependenc
 signing_link = add("build:sidesign", f'isa = PBXBuildFile; productRef = {signing_product};')
 frameworks = add("frameworks", f"isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = {array([signing_link])}; runOnlyForDeploymentPostprocessing = 0;")
 script = 'set -eu\ncase "$PLATFORM_NAME" in iphoneos) native_platform=device ;; iphonesimulator) native_platform=simulator ;; *) echo "Unsupported platform" >&2; exit 1 ;; esac\n"$SRCROOT/Native/build.sh" "$native_platform"\n'
-native = add("native-build", f'isa = PBXShellScriptBuildPhase; alwaysOutOfDate = 1; buildActionMask = 2147483647; files = (); inputPaths = (); outputPaths = (); name = "Build native location transport"; runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh; shellScript = {quoted(script)};')
+# Cargo tracks Rust sources, vendored dependencies, and toolchain changes. Keep
+# asking Cargo, but declare its product and preserve unchanged archive timestamps.
+native_outputs = array([quoted("$(SRCROOT)/Native/build/$(PLATFORM_NAME)/libgpsnative.a")])
+native = add("native-build", f'isa = PBXShellScriptBuildPhase; alwaysOutOfDate = 1; buildActionMask = 2147483647; files = (); inputPaths = (); outputPaths = {native_outputs}; name = "Build native location transport"; runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh; shellScript = {quoted(script)};')
 
 def settings(values):
     return "{ " + " ".join(f"{key} = {quoted(value)};" for key, value in values.items()) + " }"
@@ -67,7 +84,7 @@ for name in ("Debug", "Release"):
     }
     project_configs.append(add("project-config:" + name, f"isa = XCBuildConfiguration; buildSettings = {settings(common)}; name = {name};"))
     target_values = {
-        "PRODUCT_NAME": "GPS", "PRODUCT_MODULE_NAME": "GPS", "MARKETING_VERSION": "0.3.0", "CURRENT_PROJECT_VERSION": "7",
+        "PRODUCT_NAME": "GPS", "PRODUCT_MODULE_NAME": "GPS", "MARKETING_VERSION": "0.3.0", "CURRENT_PROJECT_VERSION": "10",
         "TARGETED_DEVICE_FAMILY": "1", "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator", "SUPPORTS_MACCATALYST": "NO",
         "GENERATE_INFOPLIST_FILE": "NO", "INFOPLIST_FILE": "Config/Info.plist",
         "SWIFT_OBJC_BRIDGING_HEADER": "App/GPS-Bridging-Header.h", "HEADER_SEARCH_PATHS": "$(inherited) $(SRCROOT)/Native/include",
@@ -85,12 +102,10 @@ body = "// !$*UTF8*$!\n{\n archiveVersion = 1;\n classes = {};\n objectVersion =
 body += "".join(f"  {key} = {{ {value} }};\n" for key, value in objects.items())
 body += f" }};\n rootObject = {project};\n}}\n"
 project_dir = ROOT / "GPS.xcodeproj"
-project_dir.mkdir(exist_ok=True)
-(project_dir / "project.pbxproj").write_text(body)
+write_generated(project_dir / "project.pbxproj", body)
 scheme_dir = project_dir / "xcshareddata/xcschemes"
-scheme_dir.mkdir(parents=True, exist_ok=True)
 reference = f'<BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="{target}" BuildableName="GPS.app" BlueprintName="GPS" ReferencedContainer="container:GPS.xcodeproj"/>'
-(scheme_dir / "GPS.xcscheme").write_text(f'''<?xml version="1.0" encoding="UTF-8"?>
+write_generated(scheme_dir / "GPS.xcscheme", f'''<?xml version="1.0" encoding="UTF-8"?>
 <Scheme LastUpgradeVersion="2700" version="1.3">
   <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES"><BuildActionEntries><BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="YES" buildForArchiving="YES" buildForAnalyzing="YES">{reference}</BuildActionEntry></BuildActionEntries></BuildAction>
   <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="YES"><Testables/></TestAction>
@@ -100,4 +115,8 @@ reference = f'<BuildableReference BuildableIdentifier="primary" BlueprintIdentif
   <ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES"/>
 </Scheme>
 ''')
-print("Generated GPS.xcodeproj with", len(source_builds), "Swift sources")
+if stale_paths:
+    for path in stale_paths:
+        print(f"Stale generated file: {path}")
+    raise SystemExit(1)
+print("Checked" if args.check else "Generated", "GPS.xcodeproj with", len(source_builds), "Swift sources")

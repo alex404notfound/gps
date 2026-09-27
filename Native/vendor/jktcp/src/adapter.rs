@@ -586,6 +586,7 @@ impl Adapter {
     // -----------------------------------------------------------------------
 
     pub(crate) async fn process_tcp_packet(&mut self) -> Result<(), std::io::Error> {
+        let has_pending_work = self.has_pending_work();
         tokio::select! {
             ip_packet = self.read_ip_packet() => {
                 let (protocol, payload) = ip_packet?;
@@ -600,9 +601,10 @@ impl Adapter {
                     _ => Ok(()),
                 }
             }
-            // Short timeout so retransmissions fire in the AdapterStream case
-            // (the AdapterHandle has a 1ms tick that calls write_buffer_flush directly).
-            _ = crate::time::sleep(std::time::Duration::from_millis(500)) => {
+            // AdapterStream needs a timer for SYN retries and unacked data.
+            // An idle connection waits only for I/O; the handle's own pending-
+            // work timer is likewise disabled once all bytes are acknowledged.
+            _ = crate::time::sleep(std::time::Duration::from_millis(500)), if has_pending_work => {
                 self.check_retransmissions().await
             }
         }
@@ -1095,6 +1097,7 @@ mod tests {
         buffered: Vec<u8>,
         delivered: Vec<u8>,
         flushes: usize,
+        reads: usize,
         fail_flush: bool,
     }
 
@@ -1107,6 +1110,7 @@ mod tests {
             _cx: &mut Context<'_>,
             _buf: &mut ReadBuf<'_>,
         ) -> Poll<std::io::Result<()>> {
+            self.0.lock().unwrap().reads += 1;
             Poll::Pending
         }
     }
@@ -1262,6 +1266,64 @@ mod tests {
     // ------------------------------------------------------------------
     // Tests
     // ------------------------------------------------------------------
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_tunnel_waits_for_io_without_timer_wakeups() {
+        let probe = Arc::new(Mutex::new(WriteProbe::default()));
+        let (adapter, _) = adapter_with_connected_probe(probe.clone());
+        let mut handle = adapter.to_async_handle();
+        tokio::task::yield_now().await;
+        let initial_reads = probe.lock().unwrap().reads;
+        assert!(initial_reads > 0, "the tunnel must still listen for packets");
+
+        // A virtual minute of inactivity must not re-poll the transport. The
+        // former unconditional 500 ms timer repeatedly woke this task here.
+        for _ in 0..120 {
+            tokio::time::advance(Duration::from_millis(500)).await;
+            tokio::task::yield_now().await;
+        }
+        let (reads, flushes) = {
+            let probe = probe.lock().unwrap();
+            (probe.reads, probe.flushes)
+        };
+        assert_eq!(reads, initial_reads);
+        assert_eq!(flushes, 0);
+        handle.close().await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn packet_wait_still_retransmits_unacknowledged_data() {
+        let probe = Arc::new(Mutex::new(WriteProbe::default()));
+        let (mut adapter, host_port) = adapter_with_connected_probe(probe.clone());
+        adapter.queue_send(b"location command", host_port).unwrap();
+        adapter.write_buffer_flush().await.unwrap();
+        let original = probe.lock().unwrap().delivered.clone();
+        assert!(!original.is_empty());
+
+        tokio::time::timeout(Duration::from_secs(1), adapter.process_tcp_packet())
+            .await
+            .unwrap()
+            .unwrap();
+        let delivered = probe.lock().unwrap().delivered.clone();
+        assert_eq!(
+            delivered,
+            [original.as_slice(), original.as_slice()].concat()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn quiet_peer_does_not_disable_syn_timeout() {
+        let probe = Arc::new(Mutex::new(WriteProbe::default()));
+        let mut adapter = Adapter::new(
+            Box::new(BufferedTransport(probe)),
+            IpAddr::V6(HOST_IP),
+            IpAddr::V6(PEER_IP),
+        );
+        let result = tokio::time::timeout(Duration::from_secs(12), adapter.connect(PEER_PORT))
+            .await
+            .expect("connect must keep its own bounded SYN retry timer");
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::TimedOut);
+    }
 
     #[tokio::test]
     async fn terminal_psh_flushes_framed_transport_before_success() {

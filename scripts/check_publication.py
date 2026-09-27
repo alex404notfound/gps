@@ -72,6 +72,54 @@ def index_blobs():
     return {name.decode("utf-8"): value for name, value in indexed.items()}
 
 
+def index_blob_sizes(indexed):
+    """Read metadata in one Git call, before requesting any blob contents."""
+    object_ids = sorted({object_id for mode, object_id in indexed.values()
+                         if mode in (b"100644", b"100755")})
+    if not object_ids:
+        return {}
+    output = git("cat-file", "--batch-check", input_bytes=b"\n".join(object_ids) + b"\n")
+    records = output.splitlines()
+    if len(records) != len(object_ids):
+        raise RuntimeError("Incomplete Git object metadata")
+    sizes = {}
+    for object_id, record in zip(object_ids, records):
+        fields = record.split()
+        if (len(fields) != 3 or fields[0] != object_id or fields[1] != b"blob"
+                or not fields[2].isdigit()):
+            raise RuntimeError("Invalid Git index object")
+        sizes[object_id] = int(fields[2])
+    return sizes
+
+
+def inspect_index_contents(entries, errors):
+    """Stream already size-checked blobs through one process, one file at a time."""
+    if not entries:
+        return
+    with subprocess.Popen(
+        ["git", "-C", str(ROOT), "cat-file", "--batch"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    ) as process:
+        try:
+            for name, object_id, size in entries:
+                process.stdin.write(object_id + b"\n")
+                process.stdin.flush()
+                expected = object_id + b" blob " + str(size).encode("ascii") + b"\n"
+                if process.stdout.readline() != expected:
+                    raise RuntimeError("Git blob metadata changed")
+                data = process.stdout.read(size)
+                if len(data) != size or process.stdout.read(1) != b"\n":
+                    raise RuntimeError("Incomplete Git blob")
+                inspect_bytes(name, data, "Git index", errors)
+        except BaseException:
+            process.kill()
+            raise
+        finally:
+            process.stdin.close()
+        if process.wait() != 0:
+            raise RuntimeError("Git index contents could not be read")
+
+
 def inspect_bytes(name, data, source, errors):
     if name in FIXTURES:
         if hashlib.sha256(data).hexdigest() != FIXTURES[name]:
@@ -94,6 +142,8 @@ def has_symlink_component(relative):
 def inspect_sources(paths):
     errors, checked = [], {}
     indexed = index_blobs()
+    sizes = index_blob_sizes(indexed)
+    index_entries = []
     symlinked = {
         name for name in paths
         if not PurePosixPath(name).is_absolute()
@@ -135,11 +185,11 @@ def inspect_sources(paths):
             if mode not in (b"100644", b"100755"):
                 errors.append((name, "Git index entry is not a regular source file"))
                 continue
-            size = int(git("cat-file", "-s", object_id.decode("ascii")))
+            size = sizes[object_id]
             if size > 5 * 1024 * 1024:
                 errors.append((name, "Git index entry exceeds 5 MiB"))
                 continue
-            inspect_bytes(name, git("cat-file", "blob", object_id.decode("ascii")), "Git index", errors)
+            index_entries.append((name, object_id, size))
         if not path.exists():
             # A tracked deletion is omitted from the working-tree source snapshot.
             continue
@@ -149,6 +199,7 @@ def inspect_sources(paths):
         data = path.read_bytes()
         inspect_bytes(name, data, "working tree", errors)
         checked[name] = (data, path.stat().st_mode)
+    inspect_index_contents(index_entries, errors)
     return errors, checked
 
 

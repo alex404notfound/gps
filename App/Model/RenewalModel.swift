@@ -30,6 +30,14 @@ final class RenewalModel {
     @ObservationIgnored private let pending = PendingRenewalStore()
     @ObservationIgnored private var lastAutomaticAttempt: Date?
     @ObservationIgnored private var lastOutcome = "not attempted"
+    // A signed bundle cannot replace its embedded profile while this process is
+    // running. Cache both success and failure so UI reads never repeat disk I/O.
+    @ObservationIgnored private lazy var embeddedReference: Result<Data, Error> = Result {
+        try Self.loadReferenceData()
+    }
+    @ObservationIgnored private lazy var embeddedReferenceProfile: Result<RenewalProfile, Error> = Result {
+        try RenewalProfile(cmsData: referenceData())
+    }
 
     private init() {
         enabled = UserDefaults.standard.bool(forKey: "signingRefresh.enabled")
@@ -158,14 +166,14 @@ final class RenewalModel {
 
     private var isDue: Bool {
         guard let expiration else { return true }
-        return expiration.timeIntervalSinceNow <= 72 * 3600
+        return expiration.timeIntervalSinceNow <= RenewalSchedule.leadTime
     }
 
     private func prepare(configuration: SetupConfiguration) async throws {
         status = "Requesting a new GPS profile from Apple…"
         recordOutcome("prepare started")
         let referenceData = try referenceData()
-        let reference = try RenewalProfile(cmsData: referenceData)
+        let reference = try referenceProfile()
         let data = try await RenewalAppleAccount.shared.fetchProfile(
             referenceData: referenceData, deviceID: configuration.device.identifier)
         try Task.checkCancellation()
@@ -181,7 +189,7 @@ final class RenewalModel {
         guard let data = try pending.load() else { throw RenewalOperationError.noPreparedProfile }
         let referenceData = try referenceData()
         let profile = try RenewalProfile(cmsData: data).validatedCandidate(
-            reference: RenewalProfile(cmsData: referenceData), deviceID: configuration.device.identifier,
+            reference: referenceProfile(), deviceID: configuration.device.identifier,
             now: .now, minimumExpiration: verifiedExpiration)
         try Task.checkCancellation()
         status = "Installing and checking the GPS profile on this iPhone…"
@@ -203,6 +211,10 @@ final class RenewalModel {
     }
 
     private func referenceData() throws -> Data {
+        try embeddedReference.get()
+    }
+
+    private static func loadReferenceData() throws -> Data {
         guard Bundle.main.bundleIdentifier == "app.gps.reconstruction",
               let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision") else {
             throw RenewalOperationError.noEmbeddedProfile
@@ -213,7 +225,7 @@ final class RenewalModel {
     }
 
     private func referenceProfile() throws -> RenewalProfile {
-        try RenewalProfile(cmsData: referenceData())
+        try embeddedReferenceProfile.get()
     }
 
     private func configuration() throws -> SetupConfiguration {

@@ -23,8 +23,9 @@
 //! 1. **Incoming messages**: connect/send/pcap/close requests from callers.
 //! 2. **Incoming packets**: reads the next frame from the transport and updates
 //!    connection state.
-//! 3. **250 ms tick**: calls `write_buffer_flush`, which drains pending writes and
-//!    checks for retransmission timeouts.
+//! 3. **250 ms tick while work is pending**: calls `write_buffer_flush`, which
+//!    drains pending writes and checks for retransmission timeouts. Both this
+//!    tick and the packet reader's retry timer stay off while the tunnel is idle.
 //!
 //! The task exits when the last [`AdapterHandle`] is dropped or when
 //! [`AdapterHandle::close`] is called.

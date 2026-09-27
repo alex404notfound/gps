@@ -17,10 +17,11 @@ enum RenewalScheduler {
         }
     }
 
-    static func schedule() {
+    @MainActor static func schedule() {
         guard UserDefaults.standard.bool(forKey: "signingRefresh.enabled") else { return }
         let request = BGAppRefreshTaskRequest(identifier: identifier)
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 12 * 3600)
+        request.earliestBeginDate = RenewalSchedule.nextBackgroundRefresh(
+            now: .now, expiration: RenewalModel.shared.expiration)
         // A daily Shortcut is the user-controlled trigger; iOS chooses BGTask delivery.
         try? BGTaskScheduler.shared.submit(request)
     }

@@ -634,13 +634,16 @@ async fn establish_authenticated_rsd(
     ),
     String,
 > {
-    // A classic record prefers the trusted Lockdown/CoreDeviceProxy service
-    // instead of the RemotePairing listener. Fall back only if the
+    // An explicitly selected loopback address uses strict RemotePairing:
+    // Our on-device loopback test was denied access to Lockdown before auth.
+    // Other local endpoints prefer the trusted Lockdown/CoreDeviceProxy service
+    // when a classic record exists. Fall back only if the
     // proxy's TCP endpoint is unavailable or its classic session transport
     // closes. Never mask a certificate, device denial, identity, or protocol
     // failure; the alternate RPPairing path performs its own strict check.
-    let (mut adapter, rsd_port, lockdown, heartbeat) = match setup.lockdown_pairing.as_ref() {
-        Some(_) => match core_device_proxy_tunnel(&setup).await {
+    let prefer_proxy = setup.lockdown_pairing.is_some() && !setup.endpoint.ip().is_loopback();
+    let (mut adapter, rsd_port, lockdown, heartbeat) = match prefer_proxy {
+        true => match core_device_proxy_tunnel(&setup).await {
             Ok((adapter, rsd_port, lockdown, heartbeat)) => {
                 (adapter, rsd_port, Some(lockdown), Some(heartbeat))
             }
@@ -653,7 +656,7 @@ async fn establish_authenticated_rsd(
                 (adapter, rsd_port, None, None)
             }
         },
-        None => {
+        false => {
             let (adapter, rsd_port) = remote_pairing_tunnel(&mut setup).await?;
             (adapter, rsd_port, None, None)
         }
