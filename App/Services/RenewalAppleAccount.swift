@@ -22,7 +22,7 @@ enum RenewalAccountError: Error, LocalizedError, Sendable {
         case .authenticationFailed:
             return "Apple account sign-in did not complete. Check the account and verification code."
         case .secureStorageUnavailable:
-            return "Unlock this iPhone to access the saved renewal account."
+            return "The saved renewal account is unavailable. Open GPS once while unlocked after updating, and unlock once after each restart."
         case .localAnisetteUnavailable:
             return "The on-device Apple sign-in support files are not ready."
         case .portalUnavailable:

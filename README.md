@@ -4,6 +4,13 @@ An experimental iPhone app for simulating GPS locations. Search for a place, pic
 
 Uses LocalDevVPN and an existing pairing setup to work without a connected Mac. Includes on-device signing renewal and Shortcuts support.
 
+Signing refresh Shortcuts can run while the iPhone is locked. Open GPS once while
+unlocked after updating so it can migrate the saved setup, Apple session, and
+prepared profile. After a restart, unlock the phone once before automations run.
+Keep LocalDevVPN on and configure the Shortcuts automation to Run Immediately.
+Renewal secrets remain in the device-local Keychain using Apple's
+[background-accessible protection](https://developer.apple.com/documentation/security/ksecattraccessibleafterfirstunlockthisdeviceonly).
+
 Location monitoring uses coarse accuracy during an applied session and reduces
 sampling further in the background or Low Power Mode. Reset verification uses
 more accurate, unfiltered samples for at most 15 seconds, then stops monitoring.

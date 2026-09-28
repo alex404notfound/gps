@@ -31,7 +31,7 @@ struct GPSApp: App {
                 }
                 #endif
             }
-            .onChange(of: scenePhase) { _, phase in
+            .onChange(of: scenePhase, initial: true) { _, phase in
                 switch phase {
                 case .active:
                     model.recordSceneActive()

@@ -4,6 +4,7 @@ struct NeedsGPSRefreshIntent: AppIntent {
     static let title: LocalizedStringResource = "GPS signing refresh needed"
     static let description = IntentDescription("Return whether automatic GPS renewal is enabled and the current profile expires within three days. Use this before changing network settings in an automation.")
     static let openAppWhenRun = false
+    static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     @MainActor func perform() async -> some IntentResult & ReturnsValue<Bool> {
         .result(value: RenewalModel.shared.needsAutomaticRefresh)
@@ -14,6 +15,7 @@ struct RefreshGPSAppIntent: AppIntent {
     static let title: LocalizedStringResource = "Refresh GPS signing"
     static let description = IntentDescription("Renew GPS before its seven-day profile expires. Requires Apple sign-in, internet access, and LocalDevVPN.")
     static let openAppWhenRun = false
+    static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
         guard RenewalModel.shared.enabled else { throw RenewalOperationError.disabled }
@@ -26,6 +28,7 @@ struct PrepareGPSRefreshIntent: AppIntent {
     static let title: LocalizedStringResource = "Prepare GPS signing refresh"
     static let description = IntentDescription("Download GPS's new profile while internet access is available. Use Install prepared GPS refresh after switching cellular off if the local VPN needs it.")
     static let openAppWhenRun = false
+    static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
         guard RenewalModel.shared.enabled else { throw RenewalOperationError.disabled }
@@ -38,6 +41,7 @@ struct InstallGPSRefreshIntent: AppIntent {
     static let title: LocalizedStringResource = "Install prepared GPS refresh"
     static let description = IntentDescription("Install and verify the previously prepared GPS profile through LocalDevVPN. This step does not need internet access or change location.")
     static let openAppWhenRun = false
+    static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     @MainActor func perform() async -> some IntentResult & ReturnsValue<Bool> & ProvidesDialog {
         // Report operational failure as a value so the next Shortcut action can

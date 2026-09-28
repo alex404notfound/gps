@@ -1,6 +1,5 @@
 import Foundation
 import Observation
-import Security
 import CryptoKit
 import SideSign
 
@@ -49,6 +48,8 @@ final class RenewalModel {
     }
 
     func reload() async {
+        // Reading also migrates legacy Keychain accessibility. Do this whenever
+        // GPS opens, even if renewal is disabled or the profile is not due yet.
         isSignedIn = await RenewalAppleAccount.shared.hasSession
         hasPreparedProfile = (try? pending.load()) != nil
     }
@@ -271,42 +272,31 @@ enum RenewalOperationError: LocalizedError {
         case .busy: "A signing operation is already running."
         case .noPreparedProfile: "Prepare a refresh while connected to the internet first."
         case .noEmbeddedProfile: "This build has no usable GPS signing profile. Install a signed device build."
-        case .keychain: "Unlock this iPhone to access the prepared refresh securely."
+        case .keychain: "The prepared refresh is unavailable. Open GPS once while unlocked after updating, and unlock once after each restart."
         case .disabled: "Enable automatic refresh in GPS → App Access first."
         }
     }
 }
 
 private struct PendingRenewalStore {
-    private var query: [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: "app.gps.reconstruction.renewal-state",
-         kSecAttrAccount as String: "prepared-profile",
-         kSecAttrSynchronizable as String: false]
-    }
+    private let item = BackgroundKeychainItem(
+        service: "app.gps.reconstruction.renewal-state", account: "prepared-profile")
+
     func load() throws -> Data? {
-        var query = query
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = item as? Data,
-              data.count <= 2_000_000 else { throw RenewalOperationError.keychain }
-        return data
+        do {
+            guard let data = try item.load() else { return nil }
+            guard data.count <= 2_000_000 else { throw RenewalOperationError.keychain }
+            return data
+        } catch { throw RenewalOperationError.keychain }
     }
+
     func save(_ data: Data) throws {
-        let values: [String: Any] = [kSecValueData as String: data,
-                                   kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
-        let status = SecItemUpdate(query as CFDictionary, values as CFDictionary)
-        if status == errSecSuccess { return }
-        guard status == errSecItemNotFound else { throw RenewalOperationError.keychain }
-        var item = query
-        item.merge(values) { _, new in new }
-        guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw RenewalOperationError.keychain }
+        do { try item.save(data) }
+        catch { throw RenewalOperationError.keychain }
     }
+
     func clear() throws {
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else { throw RenewalOperationError.keychain }
+        do { try item.delete() }
+        catch { throw RenewalOperationError.keychain }
     }
 }

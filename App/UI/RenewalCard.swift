@@ -23,7 +23,7 @@ struct RenewalCard: View {
             if model.isSignedIn {
                 Toggle("Automatic signing refresh", isOn: $model.enabled)
                     .disabled(model.isBusy)
-                Text("GPS attempts renewal with three days remaining, when you open it and when iOS allows background work. For a daily trigger, add “Refresh GPS signing” to a Shortcuts automation. Keep LocalDevVPN on and the phone unlocked when it runs.")
+                Text("GPS attempts renewal with three days remaining, when you open it and when iOS allows background work. For a daily trigger, add “Refresh GPS signing” to a Shortcuts automation and choose Run Immediately. Keep LocalDevVPN on. Refresh can run while locked after the first unlock following a restart. Open GPS once while unlocked after updating to enable this for your saved setup.")
                     .font(.caption).foregroundStyle(.secondary)
                 Button {
                     Task { _ = try? await model.refresh() }
