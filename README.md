@@ -11,6 +11,11 @@ Keep LocalDevVPN on and configure the Shortcuts automation to Run Immediately.
 Renewal secrets remain in the device-local Keychain using Apple's
 [background-accessible protection](https://developer.apple.com/documentation/security/ksecattraccessibleafterfirstunlockthisdeviceonly).
 
+Refresh restores GPS's same App ID if it is missing or expired in Apple's
+registration list, even while the installed profile is still valid. It verifies
+the existing account, team, device, and signing certificate first, and reports
+registration limits without deleting other apps' registrations.
+
 Location monitoring uses coarse accuracy during an applied session and reduces
 sampling further in the background or Low Power Mode. Reset verification uses
 more accurate, unfiltered samples for at most 15 seconds, then stops monitoring.

@@ -2,7 +2,7 @@ import Foundation
 import CryptoKit
 import SideSign
 
-enum RenewalAccountError: Error, LocalizedError, Sendable {
+enum RenewalAccountError: String, Error, LocalizedError, Sendable {
     case signInRequired
     case authenticationFailed
     case secureStorageUnavailable
@@ -11,6 +11,7 @@ enum RenewalAccountError: Error, LocalizedError, Sendable {
     case wrongApp
     case wrongTeam
     case missingAppID
+    case appIDLimitReached
     case signingCertificateUnavailable
     case deviceNotProvisioned
     case profileUnchanged
@@ -32,7 +33,9 @@ enum RenewalAccountError: Error, LocalizedError, Sendable {
         case .wrongTeam:
             return "The signed-in Apple account does not own this app's development team."
         case .missingAppID:
-            return "This app's identifier is unavailable on the signed-in development team."
+            return "Apple did not return GPS's App ID after a registration attempt. Try again or sign in again in GPS."
+        case .appIDLimitReached:
+            return "Apple's App ID registration limit is full. Wait for an existing registration to expire, then retry GPS refresh."
         case .signingCertificateUnavailable:
             return "The certificate that signed this app is unavailable for renewal."
         case .deviceNotProvisioned:
@@ -62,8 +65,10 @@ private final class AppleRedirectGuard: NSObject, URLSessionTaskDelegate, @unche
     }
 }
 
-/// Fetches only a new Xcode Team profile for this already installed app.
-/// It does not create or revoke certificates, register devices, or change App IDs.
+extension AppID: RenewalAppIDRecord {}
+
+/// Renews this installed app, restoring its exact App ID if the portal no longer
+/// lists it. The embedded profile pins the team, device, and signing certificate.
 actor RenewalAppleAccount {
     static let shared = RenewalAppleAccount()
 
@@ -149,10 +154,13 @@ actor RenewalAppleAccount {
         } catch {
             throw RenewalAccountError.wrongApp
         }
-        guard reference.bundleIdentifier == Bundle.main.bundleIdentifier else {
+        guard reference.bundleIdentifier == RenewalProfile.rebuiltBundleIdentifier,
+              reference.bundleIdentifier == Bundle.main.bundleIdentifier else {
             throw RenewalAccountError.wrongApp
         }
-        guard !deviceID.isEmpty else { throw RenewalAccountError.deviceNotProvisioned }
+        guard !deviceID.isEmpty, reference.deviceIDs.contains(deviceID) else {
+            throw RenewalAccountError.deviceNotProvisioned
+        }
 
         var state = try RenewalCredentials.load() ?? RenewalCredentialState()
         guard let saved = state.authSession, saved.session.isValid else {
@@ -221,11 +229,31 @@ actor RenewalAppleAccount {
 
         let appID: AppID
         do {
-            let appIDs = try await portal.fetchAppIDs(for: team, session: session)
-            guard let matched = appIDs.first(where: { $0.bundleIdentifier == reference.bundleIdentifier }) else {
-                throw RenewalAccountError.missingAppID
-            }
-            appID = matched
+            appID = try await RenewalAppIDResolver.resolve(
+                bundleIdentifier: reference.bundleIdentifier,
+                fetch: { [portal] in
+                    try await self.checkGeneration(generation)
+                    return try await portal.fetchAppIDs(for: team, session: session)
+                },
+                register: { [portal] bundleIdentifier in
+                    // Only restore the app already proven to belong to this
+                    // account, team, device, and existing signing certificate.
+                    try await self.checkGeneration(generation)
+                    do {
+                        return try await portal.addAppID(
+                            withName: "GPS Rebuilt", bundleIdentifier: bundleIdentifier,
+                            team: team, session: session)
+                    } catch DeveloperPortalError.bundleIdentifierUnavailable {
+                        throw RenewalAppIDError.alreadyRegistered
+                    } catch DeveloperPortalError.maximumAppIDLimitReached {
+                        throw RenewalAccountError.appIDLimitReached
+                    }
+                })
+            try checkGeneration(generation)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch RenewalAppIDError.registrationUnavailable {
+            throw RenewalAccountError.missingAppID
         } catch let error as RenewalAccountError {
             throw error
         } catch {
@@ -259,6 +287,11 @@ actor RenewalAppleAccount {
         guard generation == sessionGeneration else { throw CancellationError() }
         try Task.checkCancellation()
         return renewed.data
+    }
+
+    private func checkGeneration(_ generation: Int) throws {
+        guard generation == sessionGeneration else { throw CancellationError() }
+        try Task.checkCancellation()
     }
 
     private func freshAnisette(

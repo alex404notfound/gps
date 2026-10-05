@@ -84,7 +84,7 @@ for name in ("Debug", "Release"):
     }
     project_configs.append(add("project-config:" + name, f"isa = XCBuildConfiguration; buildSettings = {settings(common)}; name = {name};"))
     target_values = {
-        "PRODUCT_NAME": "GPS", "PRODUCT_MODULE_NAME": "GPS", "MARKETING_VERSION": "0.3.0", "CURRENT_PROJECT_VERSION": "10",
+        "PRODUCT_NAME": "GPS", "PRODUCT_MODULE_NAME": "GPS", "MARKETING_VERSION": "0.3.0", "CURRENT_PROJECT_VERSION": "11",
         "TARGETED_DEVICE_FAMILY": "1", "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator", "SUPPORTS_MACCATALYST": "NO",
         "GENERATE_INFOPLIST_FILE": "NO", "INFOPLIST_FILE": "Config/Info.plist",
         "SWIFT_OBJC_BRIDGING_HEADER": "App/GPS-Bridging-Header.h", "HEADER_SEARCH_PATHS": "$(inherited) $(SRCROOT)/Native/include",

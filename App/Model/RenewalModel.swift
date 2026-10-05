@@ -122,7 +122,7 @@ final class RenewalModel {
             return try await install(configuration: configuration)
         } catch {
             status = error.localizedDescription
-            recordOutcome("refresh failed")
+            recordOutcome("refresh failed", error: error)
             throw error
         }
     }
@@ -137,7 +137,7 @@ final class RenewalModel {
             try await prepare(configuration: configuration())
             status = "Profile ready. Keep LocalDevVPN on, turn cellular off if needed, then install the prepared refresh."
             return status
-        } catch { status = error.localizedDescription; recordOutcome("prepare failed"); throw error }
+        } catch { status = error.localizedDescription; recordOutcome("prepare failed", error: error); throw error }
     }
 
     func installPrepared() async throws -> String {
@@ -145,7 +145,7 @@ final class RenewalModel {
         isBusy = true
         defer { isBusy = false }
         do { return try await install(configuration: configuration()) }
-        catch { status = error.localizedDescription; recordOutcome("install failed"); throw error }
+        catch { status = error.localizedDescription; recordOutcome("install failed", error: error); throw error }
     }
 
     func runAutomatically(throttle: Bool) async -> Bool {
@@ -238,7 +238,7 @@ final class RenewalModel {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    private func recordOutcome(_ outcome: String) {
+    private func recordOutcome(_ outcome: String, error: Error? = nil) {
         lastOutcome = outcome
         struct Diagnostic: Encodable {
             let recordedAt: Date
@@ -248,18 +248,21 @@ final class RenewalModel {
             let prepared: Bool
             let verifiedExpiration: Date?
             let verifiedAt: Date?
+            let failureReason: String?
         }
         let diagnostic = Diagnostic(recordedAt: .now, outcome: lastOutcome,
                                     automaticEnabled: enabled, signedIn: isSignedIn,
                                     prepared: hasPreparedProfile,
-                                    verifiedExpiration: verifiedExpiration, verifiedAt: verifiedAt)
+                                    verifiedExpiration: verifiedExpiration, verifiedAt: verifiedAt,
+                                    failureReason: (error as? RenewalAccountError)?.rawValue)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(diagnostic) else { return }
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("GPSRenewal", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        // Fixed outcomes and dates only; no account, profile, device, or error payloads.
+        // Fixed outcomes, error codes, and dates only; no account, profile,
+        // device, or raw server error payloads.
         try? data.write(to: directory.appendingPathComponent("renewal-status.json"),
                         options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }

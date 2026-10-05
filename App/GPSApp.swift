@@ -29,6 +29,10 @@ struct GPSApp: App {
                 if ProcessInfo.processInfo.arguments.contains("--restore-default-vpn-address") {
                     await model.updateConnectionAddress("10.7.0.1")
                 }
+                if ProcessInfo.processInfo.arguments.contains("--refresh-signing") {
+                    await model.renewal.reload()
+                    _ = try? await model.renewal.refresh()
+                }
                 #endif
             }
             .onChange(of: scenePhase, initial: true) { _, phase in
